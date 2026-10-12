@@ -23,6 +23,10 @@ Gst.init(None)
 
 
 class ScreenCapture:
+    # Consecutive unmappable buffers after which the active pipeline config is
+    # considered broken and the next converter is tried.
+    _MAP_FAILURE_LIMIT = 5
+
     def __init__(
         self,
         scale_factor: float = 0.125,
@@ -58,6 +62,7 @@ class ScreenCapture:
         self._pipeline_error_logged = False
         self._runtime_failed_configs: Set[str] = set()
         self._active_config_key: Optional[str] = None
+        self._map_failures = 0
 
         self._source_width: Optional[int] = None
         self._source_height: Optional[int] = None
@@ -525,6 +530,7 @@ class ScreenCapture:
 
                 self._pipeline_running = True
                 self._pipeline_error_logged = False
+                self._map_failures = 0
                 self._active_config_key = config_key
                 desc = (
                     pipeline_str.split(" ! ")[1] if " ! " in pipeline_str else "unknown"
@@ -562,6 +568,37 @@ class ScreenCapture:
                 "will fall back to next converter on restart"
             )
         self._stop_gst_pipeline()
+
+    def _on_unmappable_buffer(self, fmt, width, height) -> None:
+        """Called for every frame whose buffer cannot be mapped to system memory.
+
+        Some GL/driver combinations (e.g. Mesa/RADV, where gldownload can only
+        read back RGBA textures) negotiate fine but never deliver CPU-readable
+        frames, so the pipeline never errors out. After a few consecutive
+        failures, mark the active config as failed and restart with the next
+        converter instead of dropping every frame forever.
+        """
+        self._map_failures += 1
+        if self._map_failures < self._MAP_FAILURE_LIMIT:
+            return
+        if self._needs_pipeline_restart:
+            return
+
+        key = self._active_config_key
+        print(
+            f"Failed to map {self._map_failures} consecutive buffers "
+            f"(format={fmt}, {width}x{height}); trying next pipeline config"
+        )
+        if key:
+            self._runtime_failed_configs.add(key)
+            # All GL variants read back through the same gldownload path, so
+            # they share the failure; skip them rather than retrying each one.
+            if "glupload" in key and self._portal_node_id:
+                for config in self._get_pipeline_configs(self._portal_node_id):
+                    if "glupload" in config:
+                        self._runtime_failed_configs.add(self._config_key(config))
+        self._map_failures = 0
+        self._needs_pipeline_restart = True
 
     def _on_pipeline_warning(self, bus, message):
         warn, debug = message.parse_warning()
@@ -659,11 +696,10 @@ class ScreenCapture:
 
             success, map_info = buffer.map(Gst.MapFlags.READ)
             if not success:
-                print(f"Failed to map buffer (format={fmt}, {width}x{height})")
-                print("This likely means DMA-BUF buffers are being received.")
-                print("Ensure GStreamer GL plugins (gst-plugins-gl) are installed.")
+                self._on_unmappable_buffer(fmt, width, height)
                 return Gst.FlowReturn.OK
 
+            self._map_failures = 0
             try:
                 data = bytes(map_info.data)
 
