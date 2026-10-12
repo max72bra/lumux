@@ -287,6 +287,7 @@ class ScreenCapture:
                 # persist_mode = 2: persist consent until explicitly revoked,
                 # so the portal can issue a restore_token for future sessions.
                 "persist_mode": GLib.Variant("u", 2),
+                "handle_token": GLib.Variant("s", f"lx{time.time_ns()}a"),
             }
             # Only send a restore_token when we actually have one; sending an
             # empty string can confuse some portal backends.
@@ -331,6 +332,7 @@ class ScreenCapture:
                 {
                     "types": GLib.Variant("u", portal_types),
                     "multiple": GLib.Variant("b", False),
+                    "handle_token": GLib.Variant("s", f"lx{time.time_ns()}b"),
                 },
             )
             sub = bus.con.signal_subscribe(
@@ -348,7 +350,11 @@ class ScreenCapture:
                 bus.con.signal_unsubscribe(sub)
 
             loop = GLib.MainLoop()
-            req = screencast.Start(self._portal_session_handle, "", {})
+            req = screencast.Start(
+                self._portal_session_handle,
+                "",
+                {"handle_token": GLib.Variant("s", f"lx{time.time_ns()}c")},
+            )
             sub = bus.con.signal_subscribe(
                 None,
                 "org.freedesktop.portal.Request",
