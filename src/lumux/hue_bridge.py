@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 from typing import Dict, List, Optional
 
-from lumux.bridge_client import BridgeClient, BridgeError
+from lumux.bridge_client import BridgeClient, BridgeConnectionError, BridgeError
 from lumux.utils.logging import timed_print
 
 
@@ -63,7 +63,8 @@ class HueBridge:
         The bridge rejects this call with a "link button not pressed" error
         until the physical link button has been pressed, so this polls the
         bridge every `retry_delay` seconds (default: 90s total) giving the
-        user time to walk over and press it before giving up.
+        user time to walk over and press it before giving up. Gives up
+        immediately if the bridge cannot be reached.
 
         Args:
             bridge_ip: IP address of the Hue bridge
@@ -82,6 +83,10 @@ class HueBridge:
                     self.bridge_ip = bridge_ip
                     self._client = None  # Reset client with new credentials
                     return result
+            except BridgeConnectionError as e:
+                # Wrong IP or bridge offline: waiting longer won't help
+                print(f"Error creating user: {e}")
+                return None
             except BridgeError as e:
                 print(f"Waiting for link button press (attempt {attempt}/{max_retries}): {e}")
             if attempt < max_retries:

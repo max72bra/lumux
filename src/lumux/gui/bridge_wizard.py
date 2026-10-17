@@ -437,7 +437,7 @@ class BridgeWizard(Adw.NavigationPage):
                 self.connect_status_row.set_subtitle("Connected!")
         else:
             self.connect_status_row.set_subtitle(
-                "Timed out waiting for link button press. Try again."
+                "Authentication failed (link button not pressed in time, or bridge unreachable). Try again."
             )
             self.auth_btn.set_sensitive(True)
 
